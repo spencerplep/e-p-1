@@ -51,12 +51,12 @@ class Grids:
         return dim / self.dx
 
 class Space:
-    def __init__(self, objects=None, space_limits=None):
+    def __init__(self, objects=None, space_limits=None, ):
         self.objects = objects
         self.fields = []
         self.object_limits = None
         self.smallest_feature = None
-        self.extend_distance = 10.0
+        self.extend_distance = 0.5
 
         self.space_limits = space_limits
 
@@ -176,7 +176,7 @@ class Space:
 
         for i in range(grids.voltage.shape[axis]):
             index[axis] = i
-            grids.voltage[tuple(index)] = sign * magnitude * grids.dx * i
+            grids.voltage[tuple(index)] += sign * magnitude * grids.dx * i
 
         index[axis] = 0                 # lower face; use -1 for upper face
         grids.gnd[tuple(index)] = 1

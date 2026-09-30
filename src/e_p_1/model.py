@@ -3,6 +3,8 @@
 import numpy as np
 
 
+class out:
+    pass
 
 
 class Material:
@@ -22,7 +24,7 @@ Boundary = Material(Sigma=0.0, Epsilon=1.0, boundary=True)
 Grounded = Material(Sigma=np.inf, Epsilon=1.0, grounded=True)
 
 class Object:
-    def __init__(self, size, position, material=Metal):
+    def __init__(self, size, position, material=Grounded):
         # only rectangular for now
         # all of these dimensions are in units, and grid sizes are determined later.
 
@@ -46,9 +48,13 @@ class Grids:
         self.pec = None
         self.gnd = None
         self.dx = dx
+        self.space_limits = None
 
     def dim_to_coords(self, dim):
-        return dim / self.dx
+        return (dim - self.space_limits[0]) / self.dx
+
+    def single_dim_to_coord(self, dim, axis):
+        return int(round((dim - self.space_limits[0][axis]) / self.dx))
 
 class Space:
     def __init__(self, objects=None, space_limits=None, ):
@@ -59,6 +65,11 @@ class Space:
         self.extend_distance = 0.5
 
         self.space_limits = space_limits
+        self.space_limits_flag = False
+        if space_limits:
+            self.space_limits_flag = True
+
+        self.grids = None
 
         self.update_object_limits()
 
@@ -92,7 +103,9 @@ class Space:
 
         self.object_limits_size = max(self.object_limits[1] - self.object_limits[0])
 
-        self.space_limits = -1 * self.extend_distance * self.object_limits_size + self.object_limits[0], self.extend_distance * self.object_limits_size + self.object_limits[1]
+        # set the sim limits if we didnt define them earlier
+        if not self.space_limits_flag:
+            self.space_limits = -1 * self.extend_distance * self.object_limits_size + self.object_limits[0], self.extend_distance * self.object_limits_size + self.object_limits[1]
 
 
     def build_grids(self, dx=1/4):
@@ -101,6 +114,7 @@ class Space:
         if dx is None:
             dx = self.smallest_feature / 10.0  # So that the smallest feature is well resolved
 
+        
         if self.space_limits is None:
             print("Space limits not initialized.")
             return None
@@ -129,21 +143,24 @@ class Space:
 
         grids = Grids(dx=dx)
 
+        grids.space_limits = self.space_limits
+        
+        
         if self.objects:
 
             for obj in self.objects:
-                pos, size = obj.bounds
+                pos1, pos2 = obj.bounds # the min and max corners of the object
 
-                pos = grids.dim_to_coords(pos)
-                size = grids.dim_to_coords(size)
+                pos1 = grids.dim_to_coords(pos1)
+                pos2 = grids.dim_to_coords(pos2)
 
-                # slice out the volume of our object
-                object_vol = (slice(int(pos[0]), int(pos[0] + size[0])), 
-                            slice(int(pos[1]), int(pos[1] + size[1])), 
-                            slice(int(pos[2]), int(pos[2] + size[2])))
+                # slice out the volume of our object; slice throught the object
+                object_vol = (slice(int(pos1[0]), int(pos2[0])), 
+                            slice(int(pos1[1]), int(pos2[1])), 
+                            slice(int(pos1[2]), int(pos2[2])))
 
                 # object voltage shouldnt be anything
-                voltage_grid[object_vol] = np.nan
+                voltage_grid[object_vol] = 0
 
                 if obj.material.grounded:
                     gnd_grid[object_vol] = 1
@@ -158,9 +175,34 @@ class Space:
         grids.boundary = boundary_grid
         grids.pec = pec_grid
         grids.gnd = gnd_grid
-  
+        
+        self.grids = grids
 
         return grids
+
+    def set_object_vols_to(self, v = 0, grids = None):
+            if grids is None:
+                self.grids = self.set_object_vols_to(v, self.grids)
+                return
+            
+            if self.objects:
+
+                for obj in self.objects:
+                    pos1, pos2 = obj.bounds # the min and max corners of the object
+
+                    pos1 = grids.dim_to_coords(pos1)
+                    pos2 = grids.dim_to_coords(pos2)
+
+                    # slice out the volume of our object; slice throught the object
+                    object_vol = (slice(int(pos1[0]), int(pos2[0])), 
+                                slice(int(pos1[1]), int(pos2[1])), 
+                                slice(int(pos1[2]), int(pos2[2])))
+
+                    # set and keep the residual
+                    obj.res_voltage = np.sum(grids.voltage[object_vol])
+                    grids.voltage[object_vol] = v
+
+                return grids
 
     def ambient_field(self, grids, direction, magnitude, ground_plane = None):
         """Set the ambient electric field in the simulation space.
@@ -184,9 +226,48 @@ class Space:
         return grids
 
 
-# class Solver:
-#     def __init__(self):
-#         pass
+    def step_grid(self, grids):
+        # we will only solve votage and set charge and etc off of that. Assume field form +z direction:
+        v_next = grids.voltage * 0
 
-#     def solve(self, grids):
+        v_next[:-1, :, :] += grids.voltage[1:, :, :]
+        v_next[1:, :, :] += grids.voltage[:-1, :, :]
 
+        v_next[:, :-1, :] += grids.voltage[:, 1:, :]
+        v_next[:, 1:, :] += grids.voltage[:, :-1, :]
+
+        v_next[:, :, :-1] += grids.voltage[:, :, 1:]
+        v_next[:, :, 1:] += grids.voltage[:, :, :-1]
+
+        v_next = 1/6 * v_next
+
+        _grids = grids
+
+        # set boundaries to earlier values
+        v_next = v_next * ((grids.boundary * -1) + 1) + grids.boundary * grids.voltage
+        
+        _grids.voltage = v_next
+        
+        _grids = self.set_object_vols_to(0, _grids)
+
+        return _grids
+
+    def solve_grids(self, epsilon=1e-4):
+
+        residual = []
+        _grid_last = self.grids
+        r = np.inf
+        # while r > epsilon:
+        for _ in range(1000):
+            v_last = _grid_last.voltage.copy()
+            _grid_next = self.step_grid(_grid_last)
+            r = np.sqrt(np.sum(np.abs(v_last - _grid_next.voltage)**2))
+            residual.append(r)
+            _grid_last = _grid_next
+            print(r, "\n")
+
+
+        out.residual = residual
+        out.grid = _grid_next
+
+        return out

@@ -3,36 +3,43 @@
 
 
 
-from e_p_1.model import Object, Space
+from e_p_1.model import Object, Space, Materials
 
 
 import numpy as np
 import pyqtgraph as qt
 
 
-a = Object(size=(4, 1, 1), position=(0, 0, 0))
+materials = Materials()
 
-b = Object(size=(4, 1, 2), position=(0, 1, 0))
+a = Object(size=(20, 20, 1), position=(-10, -10, 0), material=materials.grounded)
 
-c = Object(size=(4, 1, 3), position=(0, 2, 0))
+# b = Object(size=(1, 8, 2), position=(0, -4, 1.55), material=materials.metal)
 
-space = Space(space_limits=[[-5, -5, -5], [5, 5, 5]], objects=[a, b, c])
+c = Object(size=(20, 20, 1), position=(-10, -10, 5), material=materials.grounded)
+
+space = Space( objects=[a, c], dx=0.5, extend_distance=1)
 
 grids = space.build_grids()
 
 grids = space.ambient_field(grids, direction=[0, 0, 1], magnitude=-100.0)
 
 
-out = space.solve_grids()
+out = space.solve_grids(epsilon=1e-2)
 
 v = out.grid.voltage
 
-z = v[space.grids.single_dim_to_coord(0, 0), :, :]
+z = -1 * v[space.grids.single_dim_to_coord(0, 0), :, :]
+
+z = np.gradient(z, axis=1)
+
+print(z.shape)
 
 app = qt.mkQApp()
 view = qt.ImageView()
 view.setImage(z)
 view.show()
+view.getView().invertY(False)
 qt.exec()
 
 # app = qt.mkQApp()

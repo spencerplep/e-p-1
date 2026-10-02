@@ -17,11 +17,17 @@ class Material:
 
 
 
-Metal = Material(Sigma=np.inf, Epsilon=1.0)
+Metal = Material(Sigma=np.inf, Epsilon=1.0, grounded=False)
 
 Boundary = Material(Sigma=0.0, Epsilon=1.0, boundary=True)
 
 Grounded = Material(Sigma=np.inf, Epsilon=1.0, grounded=True)
+
+class Materials:
+    def __init__(self):
+        self.metal = Metal
+        self.boundary = Boundary
+        self.grounded = Grounded
 
 class Object:
     def __init__(self, size, position, material=Grounded):
@@ -57,12 +63,13 @@ class Grids:
         return int(round((dim - self.space_limits[0][axis]) / self.dx))
 
 class Space:
-    def __init__(self, objects=None, space_limits=None, ):
+    def __init__(self, objects=None, space_limits=None, extend_distance=0.5, dx=0.01):
         self.objects = objects
         self.fields = []
         self.object_limits = None
         self.smallest_feature = None
-        self.extend_distance = 0.5
+        self.extend_distance = extend_distance
+        self.dx = dx
 
         self.space_limits = space_limits
         self.space_limits_flag = False
@@ -108,20 +115,17 @@ class Space:
             self.space_limits = -1 * self.extend_distance * self.object_limits_size + self.object_limits[0], self.extend_distance * self.object_limits_size + self.object_limits[1]
 
 
-    def build_grids(self, dx=1/4):
+    def build_grids(self):
         # Build the whole simulation grid, with some voxel size determined by smallest feature.
-
-        if dx is None:
-            dx = self.smallest_feature / 10.0  # So that the smallest feature is well resolved
 
         
         if self.space_limits is None:
             print("Space limits not initialized.")
             return None
 
-        whole_grid = np.mgrid[self.space_limits[0][0]:self.space_limits[1][0]:dx,
-                              self.space_limits[0][1]:self.space_limits[1][1]:dx,
-                              self.space_limits[0][2]:self.space_limits[1][2]:dx]
+        whole_grid = np.mgrid[self.space_limits[0][0]:self.space_limits[1][0]:self.dx,
+                              self.space_limits[0][1]:self.space_limits[1][1]:self.dx,
+                              self.space_limits[0][2]:self.space_limits[1][2]:self.dx]
 
         # Scalar grids
         # sigma_grid = whole_grid[0] * 0  # Initialize with zeros
@@ -141,7 +145,7 @@ class Space:
         pec_grid = whole_grid[0] * 0
         gnd_grid = whole_grid[0] * 0
 
-        grids = Grids(dx=dx)
+        grids = Grids(dx=self.dx)
 
         grids.space_limits = self.space_limits
         
@@ -180,29 +184,98 @@ class Space:
 
         return grids
 
-    def set_object_vols_to(self, v = 0, grids = None):
-            if grids is None:
-                self.grids = self.set_object_vols_to(v, self.grids)
-                return
-            
-            if self.objects:
+    def update_object_voltages(self, grids):
+        for i, obj in enumerate(self.objects):
+            if obj.material.grounded:
+                self.set_object_voltage(0, obj=obj, grids=grids)
+            elif obj.material.Sigma == np.inf and not obj.material.grounded:
+                # get object incident E
 
-                for obj in self.objects:
-                    pos1, pos2 = obj.bounds # the min and max corners of the object
+                _E = np.gradient(grids.voltage, axis=(0,1,2))
 
-                    pos1 = grids.dim_to_coords(pos1)
-                    pos2 = grids.dim_to_coords(pos2)
+                pos1, pos2 = obj.bounds # the min and max corners of the object
 
-                    # slice out the volume of our object; slice throught the object
-                    object_vol = (slice(int(pos1[0]), int(pos2[0])), 
-                                slice(int(pos1[1]), int(pos2[1])), 
-                                slice(int(pos1[2]), int(pos2[2])))
+                pos1 = grids.dim_to_coords(pos1)
+                pos2 = grids.dim_to_coords(pos2)
 
-                    # set and keep the residual
-                    obj.res_voltage = np.sum(grids.voltage[object_vol])
-                    grids.voltage[object_vol] = v
+                # slice out the volume of our object; slice throught the object
+                object_vol = (slice(int(pos1[0]), int(pos2[0])), 
+                            slice(int(pos1[1]), int(pos2[1])), 
+                            slice(int(pos1[2]), int(pos2[2])))
 
-                return grids
+                # find surface area of the object
+                surface_area = 2 * ( (pos2[0] - pos1[0]) * (pos2[1] - pos1[1]) + 
+                                    (pos2[0] - pos1[0]) * (pos2[2] - pos1[2]) + 
+                                    (pos2[1] - pos1[1]) * (pos2[2] - pos1[2]) )
+
+                # get the slice for the surface of the object +1 in each direction
+                # just the surface at obj x+1:
+                plus_x = (slice(int(pos2[0]), int(pos2[0])+1),
+                          slice(int(pos1[1]), int(pos2[1])), 
+                          slice(int(pos1[2]), int(pos2[2])))
+                minus_x = (slice(int(pos1[0])-1, int(pos1[0])),
+                           slice(int(pos1[1]), int(pos2[1])), 
+                           slice(int(pos1[2]), int(pos2[2])))
+
+                # get the gradient of the voltage field for those values
+                plus_x_E = np.sum(_E[0][plus_x])
+                minus_x_E = np.sum(_E[0][minus_x])
+                # plus_x_E = np.sum(grids.voltage[plus_x])
+                # minus_x_E = np.sum(grids.voltage[minus_x])
+
+                # the rest
+                plus_y = (slice(int(pos1[0]), int(pos2[0])), 
+                          slice(int(pos2[1]), int(pos2[1])+1),
+                          slice(int(pos1[2]), int(pos2[2])))
+                minus_y = (slice(int(pos1[0]), int(pos2[0])), 
+                           slice(int(pos1[1])-1,int(pos1[1])),
+                           slice(int(pos1[2]), int(pos2[2])))
+
+                plus_z = (slice(int(pos1[0]), int(pos2[0])), 
+                          slice(int(pos1[1]), int(pos2[1])), 
+                          slice(int(pos2[2]), int(pos2[2])+1))
+                minus_z = (slice(int(pos1[0]), int(pos2[0])), 
+                           slice(int(pos1[1]), int(pos2[1])), 
+                           slice(int(pos1[2])-1, int(pos1[2])))
+
+                # get the gradient of the voltage field for those values
+                plus_y_E = np.sum(_E[1][plus_y])
+                minus_y_E = np.sum(_E[1][minus_y])
+                plus_z_E = np.sum(_E[2][plus_z])
+                minus_z_E = np.sum(_E[2][minus_z])
+                # plus_y_E = np.sum(grids.voltage[plus_y])
+                # minus_y_E = np.sum(grids.voltage[minus_y])
+                # plus_z_E = np.sum(grids.voltage[plus_z])
+                # minus_z_E = np.sum(grids.voltage[minus_z])
+
+                # incident E
+                object_voltage = (plus_x_E + minus_x_E + 
+                                  plus_y_E + minus_y_E + 
+                                  plus_z_E + minus_z_E) / surface_area
+                print(object_voltage)
+
+                self.set_object_voltage(object_voltage, obj=obj, grids=grids)
+        return grids
+
+    def set_object_voltage(self, v = 0, obj=None, grids = None, set_residual=True):
+           
+        pos1, pos2 = obj.bounds # the min and max corners of the object
+
+        pos1 = grids.dim_to_coords(pos1)
+        pos2 = grids.dim_to_coords(pos2)
+
+        # slice out the volume of our object; slice throught the object
+        object_vol = (slice(int(pos1[0]), int(pos2[0])), 
+                    slice(int(pos1[1]), int(pos2[1])), 
+                    slice(int(pos1[2]), int(pos2[2])))
+
+        # set and keep the residual
+        if set_residual:
+            obj.res_voltage = np.sum(grids.voltage[object_vol])
+        
+        grids.voltage[object_vol] = v
+
+        return grids
 
     def ambient_field(self, grids, direction, magnitude, ground_plane = None):
         """Set the ambient electric field in the simulation space.
@@ -248,26 +321,29 @@ class Space:
         
         _grids.voltage = v_next
         
-        _grids = self.set_object_vols_to(0, _grids)
+        _grids = self.update_object_voltages(_grids)
 
         return _grids
 
-    def solve_grids(self, epsilon=1e-4):
+    def solve_grids(self, epsilon=5e-3):
 
         residual = []
         _grid_last = self.grids
-        r = np.inf
-        # while r > epsilon:
-        for _ in range(1000):
+        r_last = np.inf
+        pct = np.inf
+        while pct > epsilon:
             v_last = _grid_last.voltage.copy()
             _grid_next = self.step_grid(_grid_last)
             r = np.sqrt(np.sum(np.abs(v_last - _grid_next.voltage)**2))
             residual.append(r)
+            pct = (r_last - r)/r_last if ( r_last != 0 and r_last != np.inf ) else np.inf
+            r_last = r
             _grid_last = _grid_next
-            print(r, "\n")
+            print(r, pct, "\n")
 
 
         out.residual = residual
         out.grid = _grid_next
+        out.v_view = np.flip(out.grid.voltage, axis=(0, 1, 2))
 
         return out

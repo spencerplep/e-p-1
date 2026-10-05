@@ -70,6 +70,7 @@ class Space:
         self.smallest_feature = None
         self.extend_distance = extend_distance
         self.dx = dx
+        self.e_0 = 8.854187817e-12
 
         self.space_limits = space_limits
         self.space_limits_flag = False
@@ -130,8 +131,10 @@ class Space:
         # Scalar grids
         # sigma_grid = whole_grid[0] * 0  # Initialize with zeros
         # epsilon_grid = whole_grid[0] * 1 # coefficient of e0
+        # actually for any ss solution we only really need the voltage grid and the boundary grid.
+        # We don't even really need the boundary grid ngl
         voltage_grid = whole_grid[0] * 0
-        charge_grid = whole_grid[0] * 0
+
 
         boundary_grid = whole_grid[0] * 0
         # set true for boundary voxels
@@ -142,8 +145,6 @@ class Space:
         boundary_grid[:, :, 0] = 1
         boundary_grid[:, :, -1] = 1
 
-        pec_grid = whole_grid[0] * 0
-        gnd_grid = whole_grid[0] * 0
 
         grids = Grids(dx=self.dx)
 
@@ -166,19 +167,11 @@ class Space:
                 # object voltage shouldnt be anything
                 voltage_grid[object_vol] = 0
 
-                if obj.material.grounded:
-                    gnd_grid[object_vol] = 1
-                elif obj.material.Sigma == np.inf:
-                    pec_grid[object_vol] = 1
-
         # would be useful for having voltage sources inside my space
         # grids.sources = source_grid
         # grids.source_vals = source_vals_grid
         grids.voltage = voltage_grid
-        grids.charge = charge_grid
         grids.boundary = boundary_grid
-        grids.pec = pec_grid
-        grids.gnd = gnd_grid
         
         self.grids = grids
 
@@ -188,7 +181,16 @@ class Space:
         for i, obj in enumerate(self.objects):
             if obj.material.grounded:
                 self.set_object_voltage(0, obj=obj, grids=grids)
-            elif obj.material.Sigma == np.inf and not obj.material.grounded:
+
+        return grids
+
+    def get_object_charge(self):
+        
+        charges = []
+        grids = self.grids
+
+        for i, obj in enumerate(self.objects):
+                # Now we want to get the actual residual charge for the object
                 # get object incident E
 
                 _E = np.gradient(grids.voltage, axis=(0,1,2))
@@ -239,6 +241,7 @@ class Space:
                            slice(int(pos1[2])-1, int(pos1[2])))
 
                 # get the gradient of the voltage field for those values
+                # since we are using unit voxels, we may sum these
                 plus_y_E = np.sum(_E[1][plus_y])
                 minus_y_E = np.sum(_E[1][minus_y])
                 plus_z_E = np.sum(_E[2][plus_z])
@@ -248,14 +251,21 @@ class Space:
                 # plus_z_E = np.sum(grids.voltage[plus_z])
                 # minus_z_E = np.sum(grids.voltage[minus_z])
 
-                # incident E
-                object_voltage = (plus_x_E + minus_x_E + 
-                                  plus_y_E + minus_y_E + 
-                                  plus_z_E + minus_z_E) / surface_area
-                print(object_voltage)
+                # incident E; 
+                # E is in units of V/m
+                # surface area is in units of dx^2
+                # dx is in units of m
+                object_charge = (plus_x_E - minus_x_E + 
+                                  plus_y_E - minus_y_E + 
+                                  plus_z_E - minus_z_E)  * self.e_0 * surface_area * self.dx**2
 
-                self.set_object_voltage(object_voltage, obj=obj, grids=grids)
-        return grids
+                # set the object charge to the incident E * surface area
+                self.objects[i].charge = object_charge
+
+                charges.append(object_charge)
+
+                
+        return charges
 
     def set_object_voltage(self, v = 0, obj=None, grids = None, set_residual=True):
            
@@ -269,17 +279,16 @@ class Space:
                     slice(int(pos1[1]), int(pos2[1])), 
                     slice(int(pos1[2]), int(pos2[2])))
 
-        # set and keep the residual
-        if set_residual:
-            obj.res_voltage = np.sum(grids.voltage[object_vol])
-        
         grids.voltage[object_vol] = v
 
         return grids
 
     def ambient_field(self, grids, direction, magnitude, ground_plane = None):
         """Set the ambient electric field in the simulation space.
-        Currently only works for a single direction of field."""
+        Currently only works for a single direction of field.
+        Magnitude is in units of V/m
+        dx is in m already
+        """
         if ground_plane is None:
             axis = np.argmax(np.abs(direction))
             sign = np.sign(direction[axis])
@@ -294,7 +303,7 @@ class Space:
             grids.voltage[tuple(index)] += sign * magnitude * grids.dx * i
 
         index[axis] = 0                 # lower face; use -1 for upper face
-        grids.gnd[tuple(index)] = 1
+        # grids.gnd[tuple(index)] = 1
 
         return grids
 
@@ -325,7 +334,7 @@ class Space:
 
         return _grids
 
-    def solve_grids(self, epsilon=5e-3):
+    def solve_grids(self, epsilon=5e-3, v=False):
 
         residual = []
         _grid_last = self.grids
@@ -339,11 +348,9 @@ class Space:
             pct = (r_last - r)/r_last if ( r_last != 0 and r_last != np.inf ) else np.inf
             r_last = r
             _grid_last = _grid_next
-            print(r, pct, "\n")
-
-
-        out.residual = residual
+            if v:
+                print(f"delta-r: {pct:.4f}")
         out.grid = _grid_next
-        out.v_view = np.flip(out.grid.voltage, axis=(0, 1, 2))
+        out.residual = np.array(residual)
 
         return out

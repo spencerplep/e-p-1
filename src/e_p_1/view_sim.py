@@ -18,7 +18,7 @@ parula = qt.ColorMap(
 )
 
 
-with open("data.pkl", "rb") as file:
+with open("full_run_parr_data.pkl", "rb") as file:
     loaded_data = pickle.load(file)
 
 print(f"Loaded: {[item for item in loaded_data]}")
@@ -26,16 +26,24 @@ print(f"Loaded: {[item for item in loaded_data]}")
 voltage_view = loaded_data['voltage_view']
 charges = loaded_data['charges']
 
-v = voltage_view[0, :, :]
+v = voltage_view[:, :, :]
 
 print(charges)
 
-a_charge = charges
+# a_charge = charges[:, 0]
+# b_charge = charges[:, 1]
 
 app = qt.mkQApp()
 view = qt.ImageView()
-view.setImage(a_charge)
+view.setImage(v)
 view.show()
 view.getView().invertY(False)
 view.setColorMap(parula)
 qt.exec()
+
+# 
+# pw = qt.plot(title="Sense Plate Charge vs. Blocker Plate Position")
+# legend = pw.addLegend()
+# pw.plot(a_charge, pen="b", name="A")
+# pw.plot(b_charge, pen="r", name="B")
+# pw.show()

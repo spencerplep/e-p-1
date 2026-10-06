@@ -29,9 +29,9 @@ import numpy as np
 
 materials = Materials()
 
-voxel_size = 0.001/4 # side length of 0.1 mm
+voxel_size = 0.001/3 # side length of 0.1 mm
 
-low_ground_plate = Object(size=(0.05, 0.12, 0.001), position=(-0.025, -0.06, -0.001)) # bottom ground plate
+low_ground_plate = Object(size=(0.05, 0.1, 0.001), position=(-0.025, -0.05, -0.001)) # bottom ground plate
 
 sense_plate_a = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05, 0.001))
 sense_plate_b = Object(size=(0.05, 0.05, 0.001), position=(-0.025, voxel_size, 0.001))
@@ -40,14 +40,13 @@ voltage_view = []
 
 charges = []
 
-print(f"Iterations:{0.12/voxel_size}")
+points = 1
 
-points = 100
+print(f"Running simulation with {points} points")
 
-iterations = 1 #int(floor(0.12/(voxel_size*points)))
 
-for i in range(iterations):
-    blocker_plate = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.06 + i*voxel_size, 0.003))
+for i in range(points):
+    blocker_plate = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05 + i*(0.1/points), 0.003))
 
     space = Space(objects=[low_ground_plate, sense_plate_a, sense_plate_b, blocker_plate],
                   dx=voxel_size, extend_distance=0.2)
@@ -56,13 +55,16 @@ for i in range(iterations):
 
     grids = space.ambient_field(grids, direction=[0, 0, 1], magnitude=-100.0) # 100 V/m in Z direction
 
-    print("Starting iteration {i}/{0.12/voxel_size}")
+    print(f"Starting iteration {i}/{points}")
 
     out = space.solve_grids(epsilon=1e-2, v=True)
 
     voltage_view.append(-1 * out.grid.voltage[space.grids.single_dim_to_coord(0, 0), :, :])
 
-    charges.append(space.get_object_charge()[1, 2])
+    charges.append(space.get_object_charge()[1:2])
+
+
+print(space.space_limits)
 
 voltage_view = np.array(voltage_view)
 charges = np.array(charges)
@@ -74,8 +76,8 @@ data = {
     "charges": charges
 }
 
-with open("data.pkl", "wb") as file:
-    pickle.dump(data, file)
+# with open("full_run_data.pkl", "wb") as file:
+#     pickle.dump(data, file)
 
 # app = qt.mkQApp()
 # view = qt.ImageView()

@@ -31,12 +31,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 materials = Materials()
 
-voxel_size = 0.001/3 # side length of 0.1 mm
+voxel_size = 0.001/2 # side length of 0.1 mm
 
-low_ground_plate = Object(size=(0.05, 0.1, 0.001), position=(-0.025, -0.05, -0.001)) # bottom ground plate
+low_ground_plate = Object(size=(0.05, 0.1+voxel_size, 0.001), position=(-0.025, -0.05+voxel_size, -0.001)) # bottom ground plate
 
-sense_plate_a = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05, 0.001))
-sense_plate_b = Object(size=(0.05, 0.05, 0.001), position=(-0.025, voxel_size, 0.001))
+sense_plate_a = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05, 0))
+sense_plate_b = Object(size=(0.05, 0.05, 0.001), position=(-0.025, voxel_size, 0))
 
 space_limits = ([-0.045, -0.07, -0.02], [0.045, 0.07, 0.024])
 
@@ -44,12 +44,12 @@ voltage_view = []
 
 charges = []
 
-points = 100
+points = 50
 
 print(f"Running simulation with {points} points")
 
 def run_iteration(i):
-    blocker_plate = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05 + i*(0.1/points), 0.003))
+    blocker_plate = Object(size=(0.05, 0.05, 0.001), position=(-0.025, -0.05 + i*(0.05+voxel_size)/points, 0.001))
     
     space = Space(objects=[low_ground_plate, sense_plate_a, sense_plate_b, blocker_plate],
                     dx=voxel_size, extend_distance=0.2, space_limits=space_limits)
@@ -58,27 +58,34 @@ def run_iteration(i):
 
     grids = space.ambient_field(grids, direction=[0, 0, 1], magnitude=-100.0) # 100 V/m in Z direction
 
-    print(f"Starting iteration {i}/{points}")
+    print(f"Starting iteration {i+1}/{points}")
 
-    out = space.solve_grids(epsilon=5e-2, v=True)
+    out = space.solve_grids(epsilon=1e-2, v=True)
+    
+    charges = space.get_object_charge()
 
-    return -1 * out.grid.voltage[space.grids.single_dim_to_coord(0, 0), :, :], space.get_object_charge()[1:2]
+    charge_a = charges[1]
+    charge_b = charges[2]
+
+    return -1 * out.grid.voltage[space.grids.single_dim_to_coord(0, 0), :, :], charge_a, charge_b
     
 
-with ThreadPoolExecutor(max_workers=24) as executor:
-    voltage_view, charges = zip(*executor.map(run_iteration, range(points)))
+with ThreadPoolExecutor(max_workers=8) as executor:
+    voltage_view, charge_a_list, charge_b_list = zip(*executor.map(run_iteration, range(points)))
 
 voltage_view = np.array(voltage_view)
-charges = np.array(charges)
+charge_a_list = np.array(charge_a_list)
+charge_b_list = np.array(charge_b_list)
 
 print("Run complete: Saving now")
 
 data = {
     "voltage_view": voltage_view,
-    "charges": charges
+    "charge_a": charge_a_list,
+    "charge_b": charge_b_list
 }
 
-with open("full_run_parr_data.pkl", "wb") as file:
+with open("final_precise.pkl", "wb") as file:
     pickle.dump(data, file)
 
 # app = qt.mkQApp()

@@ -193,7 +193,7 @@ class Space:
                 # Now we want to get the actual residual charge for the object
                 # get object incident E
 
-                _E = np.gradient(grids.voltage, axis=(0,1,2))
+                _E = [-g for g in np.gradient(grids.voltage, self.dx, axis=(0, 1, 2))]
 
                 pos1, pos2 = obj.bounds # the min and max corners of the object
 
@@ -205,10 +205,10 @@ class Space:
                             slice(int(pos1[1]), int(pos2[1])), 
                             slice(int(pos1[2]), int(pos2[2])))
 
-                # find surface area of the object
-                surface_area = 2 * ( (pos2[0] - pos1[0]) * (pos2[1] - pos1[1]) + 
-                                    (pos2[0] - pos1[0]) * (pos2[2] - pos1[2]) + 
-                                    (pos2[1] - pos1[1]) * (pos2[2] - pos1[2]) )
+                # # find surface area of the object
+                # surface_area = 2 * ( (pos2[0] - pos1[0]) * (pos2[1] - pos1[1]) + 
+                #                     (pos2[0] - pos1[0]) * (pos2[2] - pos1[2]) + 
+                #                     (pos2[1] - pos1[1]) * (pos2[2] - pos1[2]) ) * self.dx**2
 
                 # get the slice for the surface of the object +1 in each direction
                 # just the surface at obj x+1:
@@ -257,7 +257,7 @@ class Space:
                 # dx is in units of m
                 object_charge = (plus_x_E - minus_x_E + 
                                   plus_y_E - minus_y_E + 
-                                  plus_z_E - minus_z_E)  * self.e_0 * surface_area * self.dx**2
+                                  plus_z_E - minus_z_E)  * self.e_0 * self.dx**2
 
                 # set the object charge to the incident E * surface area
                 self.objects[i].charge = object_charge
